@@ -30,6 +30,7 @@ nav{display:flex;gap:8px;flex-wrap:wrap;margin:18px 0 24px}.tab{border:1px solid
   <button class="tab" data-tab="jugadores">Jugadores</button>
   <button class="tab" data-tab="equipos">Equipos</button>
   <button class="tab" data-tab="resultados">Resultados</button>
+  <button class="tab" data-tab="automaticos">Datos automáticos</button>
   <button class="tab" data-tab="calculadora">Calculadora</button>
   <button class="tab" data-tab="cuotas">Cuotas</button>
  </nav>
@@ -52,6 +53,11 @@ nav{display:flex;gap:8px;flex-wrap:wrap;margin:18px 0 24px}.tab{border:1px solid
  <section id="resultados" class="section">
   <h2 class="heading">Resultados de equipos</h2><p class="desc">Partidos y marcadores disponibles en la base.</p>
   <div class="controls"><input id="resultSearch" placeholder="Buscar equipo o rival…"></div><div class="table-wrap"><table id="resultsTable"></table></div>
+ </section>
+ <section id="automaticos" class="section">
+  <h2 class="heading">Datos automáticos · Box scores</h2><p class="desc">Partidos y estadísticas individuales recuperados automáticamente de ESPN. Últimos 5/10 y máximos/mínimos se calculan sobre los partidos disponibles.</p>
+  <div class="grid" id="autoKpis"></div><div class="controls"><input id="logSearch" placeholder="Buscar jugador o equipo…"><select id="logMarket"><option value="PTS">Puntos</option><option value="REB">Rebotes</option><option value="AST">Asistencias</option><option value="3PM">Triples</option><option value="MIN">Minutos</option><option value="STL">Robos</option><option value="BLK">Tapones</option><option value="TOV">Pérdidas</option></select><select id="logWindow"><option value="all">Todos los partidos</option><option value="5">Últimos 5</option><option value="10">Últimos 10</option></select></div>
+  <div class="table-wrap"><table id="autoTable"></table></div><p class="muted" id="autoStatus">Esperando datos automáticos…</p>
  </section>
  <section id="calculadora" class="section">
   <h2 class="heading">Calculadora de apuestas</h2><p class="desc">Calcula probabilidad implícita y valor esperado usando la cuota decimal que ingreses. No predice resultados por sí sola.</p>
@@ -89,6 +95,27 @@ const teams = rows("Posiciones equipos");
 const results = rows("Resultados equipos");
 const games = rows("Partidos fuente");
 const logs = rows("Game Logs jugador");
+let autoGames = [], autoLogs = [];
+async function loadAutomaticData(){
+ const status=document.getElementById('autoStatus');
+ try{
+  const response=await fetch('./data/auto.json?ts='+Date.now(),{cache:'no-store'});
+  if(!response.ok) throw new Error('Todavía no se publicó el archivo automático');
+  const auto=await response.json(); autoGames=auto.games||[]; autoLogs=auto.player_logs||[];
+  document.getElementById('autoKpis').innerHTML=[['Partidos',autoGames.length],['Registros jugador/partido',autoLogs.length],['Última actualización',auto.updated_at||'—']].map(([k,v])=>`<div class="card"><div class="muted">${esc(k)}</div><div class="metric">${esc(v)}</div></div>`).join('');
+  status.textContent=`Fuente: ESPN · Actualización UTC: ${auto.updated_at||'sin fecha'}. Se muestran solo partidos con box score disponible.`;
+  renderAutoLogs();
+ }catch(e){status.textContent='La automatización aún no generó datos. Cuando GitHub Actions ejecute por primera vez, aparecerán aquí. Detalle: '+e.message;}
+}
+function renderAutoLogs(){
+ const q=norm(document.getElementById('logSearch').value||''), market=document.getElementById('logMarket').value, win=document.getElementById('logWindow').value;
+ const grouped=new Map();
+ autoLogs.filter(x=>norm((x.player||'')+' '+(x.team||'')).includes(q)).forEach(x=>{let k=x.player+'|'+x.team;if(!grouped.has(k))grouped.set(k,[]);grouped.get(k).push(x)});
+ let out=[]; for(const arr of grouped.values()){arr.sort((a,b)=>String(b.date).localeCompare(String(a.date)));let use=win==='all'?arr:arr.slice(0,Number(win));let vals=use.map(x=>Number(x[market])).filter(Number.isFinite);if(!vals.length)continue;out.push({'Jugador':arr[0].player,'Equipo':arr[0].team,'PJ analizados':vals.length,'Promedio':+(vals.reduce((a,b)=>a+b,0)/vals.length).toFixed(2),'Máximo':Math.max(...vals),'Mínimo':Math.min(...vals),'Último partido':arr[0].date,'Último valor':arr[0][market]});}
+ out.sort((a,b)=>b['Promedio']-a['Promedio']);renderTable(document.getElementById('autoTable'),out,1000);
+}
+document.getElementById('logSearch').addEventListener('input',renderAutoLogs);document.getElementById('logMarket').addEventListener('change',renderAutoLogs);document.getElementById('logWindow').addEventListener('change',renderAutoLogs);
+
 const aliases = {
  "Jugadores temporada":["Jugadores temporada","player","name","jugador","nombre"],
  "Posiciones equipos":["Posiciones equipos","team","equipo","team name"],
@@ -127,7 +154,7 @@ function drawPlayers(){
 drawPlayers();
 document.getElementById("teamSearch").addEventListener("input",()=>{let q=norm(document.getElementById("teamSearch").value);renderTable(document.getElementById("teamsTable"),teams.filter(r=>norm(Object.values(r).join(" ")).includes(q)))});
 document.getElementById("resultSearch").addEventListener("input",()=>{let q=norm(document.getElementById("resultSearch").value);renderTable(document.getElementById("resultsTable"),results.filter(r=>norm(Object.values(r).join(" ")).includes(q)))});
-renderTable(document.getElementById("teamsTable"),teams);renderTable(document.getElementById("resultsTable"),results);
+renderTable(document.getElementById("teamsTable"),teams);renderTable(document.getElementById("resultsTable"),results);loadAutomaticData();
 document.querySelectorAll(".tab").forEach(b=>b.addEventListener("click",()=>{document.querySelectorAll(".tab").forEach(x=>x.classList.toggle("active",x===b));document.querySelectorAll(".section").forEach(x=>x.classList.toggle("active",x.id===b.dataset.tab))}));
 function calculate(){
  let odds=Number(document.getElementById("odds").value),p=Number(document.getElementById("prob").value)/100,stake=Number(document.getElementById("stake").value)||0;
